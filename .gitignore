@@ -1,0 +1,49 @@
+# === Compilación de ESP-IDF ===
+build/
+*.bin
+*.elf
+*.map
+*.log
+*.d
+*.o
+*.obj
+*.a
+*.pyc
+*.class
+
+# === Archivos generados por CMake ===
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+__pycache__/
+
+# === Configuración local del entorno ===
+sdkconfig
+sdkconfig.old
+
+# === Archivos temporales del sistema/IDE ===
+*.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+*.orig
+*.user
+*.code-workspace
+
+# === Archivos de dependencias gestionadas ===
+managed_components/
+
+# === Archivos de depuración o trazas ===
+*.trace
+*.pcap
+*.log
+
+# === ZIPs u otros empaquetados del proyecto ===
+*.zip
+
+# === Otros ===
+*.out
