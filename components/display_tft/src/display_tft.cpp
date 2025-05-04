@@ -1,17 +1,14 @@
-// display_tft.cpp (actualizado para usar LVGL con ESP-IDF + FreeRTOS)
-
 #include "display_tft.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 #include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_ops.h"
-#include <esp_lvgl_port.h>
 
 #define TAG "DisplayTFT"
 
-#define TFT_WIDTH  240
+#define TFT_WIDTH 240
 #define TFT_HEIGHT 320
 
 #define TFT_MOSI 23
@@ -19,15 +16,50 @@
 #define TFT_CS   5
 #define TFT_DC   27
 #define TFT_RST  33
+#define SPI_HOST_USED SPI2_HOST
 
-static lv_disp_t* disp = NULL;
-static lv_obj_t* label = NULL;
+static lv_disp_t* disp = nullptr;
+static lv_obj_t* label = nullptr;
 
 DisplayTFT::DisplayTFT() {}
 
 void DisplayTFT::begin() {
     ESP_LOGI(TAG, "Inicializando pantalla TFT con LVGL...");
 
+    // 1. Inicializar el bus SPI primero
+    spi_bus_config_t buscfg = {
+        .mosi_io_num = TFT_MOSI,
+        .miso_io_num = -1,
+        .sclk_io_num = TFT_SCLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = TFT_WIDTH * TFT_HEIGHT * 2
+    };
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI_HOST_USED, &buscfg, SPI_DMA_CH_AUTO));
+
+    // 2. Configuración del panel LCD
+    esp_lcd_panel_io_handle_t io_handle = NULL;
+    esp_lcd_panel_io_spi_config_t io_config = {
+        .dc_gpio_num = TFT_DC,
+        .cs_gpio_num = TFT_CS,
+        .pclk_hz = 40 * 1000 * 1000,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .spi_mode = 0,
+        .trans_queue_depth = 10,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI_HOST_USED, &io_config, &io_handle));
+
+    // 3. Configuración del panel ST7789 (ajusta según tu pantalla)
+    esp_lcd_panel_handle_t panel_handle = NULL;
+    esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = TFT_RST,
+        .rgb_endian = LCD_RGB_ENDIAN_BGR,
+        .bits_per_pixel = 16,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
+
+    // 4. Inicializar LVGL Port
     const lvgl_port_cfg_t lvgl_cfg = {
         .task_priority = 2,
         .task_stack = 4096,
@@ -37,81 +69,24 @@ void DisplayTFT::begin() {
     };
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
 
-    const lvgl_port_spi_cfg_t lvgl_spi_cfg = {
-        .spi_host = SPI2_HOST,
-        .miso_io_num = -1,
-        .mosi_io_num = TFT_MOSI,
-        .sclk_io_num = TFT_SCLK,
-        .max_transfer_sz = TFT_WIDTH * TFT_HEIGHT * sizeof(uint16_t)
-    };
-
-    const lvgl_port_display_cfg_t disp_cfg = {
-        .io_type = LVGL_PORT_IO_SPI,
-        .spi = {
-            .cs_io_num = TFT_CS,
-            .dc_io_num = TFT_DC,
-            .spi_mode = 0,
-            .pclk_hz = 40 * 1000 * 1000,
-        },
-        .panel = {
-            .vendor_config = {
-                .chip_info = {
-                    .interface = ESP_LCD_INTERFACE_SPI,
-                    .vendor = ESP_LCD_VENDOR_ST7789,
-                    .color_space = ESP_LCD_COLOR_SPACE_RGB,
-                    .bits_per_pixel = 16,
-                    .reset_gpio_num = TFT_RST,
-                }
-            }
-        },
-        .buffer_size = TFT_WIDTH * TFT_HEIGHT,
+    // 5. Configuración del display para LVGL (nuevo formato en ESP-IDF 5.4.1)
+    lvgl_port_display_cfg_t disp_cfg = {
+        .io_handle = io_handle,
+        .panel_handle = panel_handle,
+        .buffer_size = TFT_WIDTH * 40,
         .double_buffer = true,
         .hres = TFT_WIDTH,
         .vres = TFT_HEIGHT,
         .monochrome = false,
     };
 
-    disp = lvgl_port_add_disp(&lvgl_spi_cfg, &disp_cfg);
+    disp = lvgl_port_add_disp(&disp_cfg);
     assert(disp);
 
-    lv_disp_t* default_disp = lv_disp_get_default();
-    lv_disp_set_rotation(default_disp, LV_DISP_ROT_NONE);
+    lv_disp_set_rotation(lv_disp_get_default(), LV_DISP_ROT_NONE);
 
     ESP_LOGI(TAG, "Pantalla TFT con LVGL inicializada correctamente");
-
-    // Mostrar pantalla inicial
     showWelcomeScreen();
 }
 
-void DisplayTFT::showWelcomeScreen() {
-    lv_obj_clean(lv_scr_act());
-    lv_obj_t* label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "Radio Receptor ESP32\nInicializando...");
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-}
-
-void DisplayTFT::showFrequency(float freq, bool isStereo) {
-    lv_obj_clean(lv_scr_act());
-    char buffer[64];
-    snprintf(buffer, sizeof(buffer), "Frecuencia: %.1f MHz\nModo: %s", freq, isStereo ? "Stereo" : "Mono");
-    label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, buffer);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 10, 10);
-}
-
-void DisplayTFT::showBand(const std::string& band) {
-    lv_obj_clean(lv_scr_act());
-    std::string txt = "Banda: " + band;
-    label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, txt.c_str());
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 10, 40);
-}
-
-void DisplayTFT::showVolume(uint8_t level) {
-    lv_obj_clean(lv_scr_act());
-    char buffer[32];
-    snprintf(buffer, sizeof(buffer), "Volumen: %d", level);
-    label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, buffer);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 10, 70);
-}
+// [Mantén el resto de tus funciones showWelcomeScreen(), showFrequency(), etc.]
